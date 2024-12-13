@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR & Barcode Scanner</title>
+    <style>
+        #qr-result {
+            font-size: 24px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        video {
+            width: 100%;
+            max-width: 600px;
+        }
+        a {
+            color: blue;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <h1>Scan QR Code or Barcode</h1>
+    <video id="video" autoplay></video>
+    <p id="qr-result">Waiting for QR code or barcode...</p>
+
+    <!-- Use CDN version for global access to Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.18.6/umd/index.min.js"></script>
+
+    <script>
+        const videoElement = document.getElementById("video");
+        const qrResultElement = document.getElementById("qr-result");
+        let lastScannedCode = ""; // Store the last scanned result
+
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyAYgjAAVKC3AuzvEzH402PcxFF66MdUEaA",
+            authDomain: "manufacturer-database.firebaseapp.com",
+            databaseURL: "https://manufacturer-database-default-rtdb.firebaseio.com",
+            projectId: "manufacturer-database",
+            storageBucket: "manufacturer-database.firebasestorage.app",
+            messagingSenderId: "921165353469",
+            appId: "1:921165353469:web:74690781fae7d32eda8994",
+            measurementId: "G-Z8L28GCVR2"
+        };
+
+        // Initialize Firebase
+        const app = firebase.initializeApp(firebaseConfig);
+        const database = firebase.database(app);
+
+        const codeReader = new ZXing.BrowserMultiFormatReader();
+
+        function checkDatabase(scannedCode) {
+            // Check if QR code contains the expected domain and extract the key from the URL
+            const domain = "try123jet.netlify.app";
+            if (scannedCode.includes(domain)) {
+                const url = new URL(scannedCode);
+                const key = url.searchParams.get("key");
+
+                if (key) {
+                    // Query Firebase with the extracted key
+                    const medicineRef = firebase.database().ref("medicines/" + key); // Assuming your Firebase stores medicines under the "medicines" node
+
+                    medicineRef.get().then((snapshot) => {
+                        if (snapshot.exists()) {
+                            const medicineData = snapshot.val();
+                            const medicineId = medicineData.medicineId; // Assuming medicineId is inside each medicine record
+                            const medicineName = medicineData.medicineName;
+                            qrResultElement.innerHTML = `
+                                Scanned Code: <a href="${scannedCode}" target="_blank">${scannedCode}</a><br>
+                                Medicine Found in Database:<br>
+                                Medicine ID: ${medicineId}<br>
+                                Medicine Name: ${medicineName}`;
+                            qrResultElement.style.color = "green";
+                        } else {
+                            qrResultElement.innerHTML = `Scanned Code: <a href="${scannedCode}" target="_blank">${scannedCode}</a><br>Medicine not found in database.`;
+                            qrResultElement.style.color = "red";
+                        }
+                    }).catch((error) => {
+                        console.error("Database query error:", error);
+                        qrResultElement.textContent = "Error querying database.";
+                        qrResultElement.style.color = "red";
+                    });
+                } else {
+                    qrResultElement.innerHTML = `Invalid URL: No key parameter found in the QR code.`;
+                    qrResultElement.style.color = "red";
+                }
+            } else {
+                qrResultElement.innerHTML = `Scanned Code: <a href="${scannedCode}" target="_blank">${scannedCode}</a><br>Medicine not in database`;
+                qrResultElement.style.color = "red";
+            }
+        }
+
+        function isValidURL(str) {
+            // Regular expression to check if a string is a valid URL
+            const pattern = new RegExp('^(https?:\\/\\/)?[a-z0-9]+([\\-\\.]{1}[a-z0-9]+)*\\.[a-z]{2,5}(:[0-9]{1,5})?(\\/.*)?$', 'i');
+            return pattern.test(str);
+        }
+
+        function startScanner() {
+            codeReader.getVideoInputDevices().then(videoInputDevices => {
+                if (videoInputDevices.length > 0) {
+                    const droidCamDevice = videoInputDevices.find(device => device.label.toLowerCase().includes("droidcam"));
+                    const selectedDeviceId = droidCamDevice ? droidCamDevice.deviceId : videoInputDevices[0].deviceId;
+
+                    const constraints = {
+                        video: {
+                            deviceId: selectedDeviceId,
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        }
+                    };
+
+                    navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+                        videoElement.srcObject = stream;
+                        videoElement.onloadedmetadata = () => {
+                            videoElement.play().catch(err => {
+                                console.error("Video playback failed:", err);
+                            });
+                        };
+
+                        codeReader.decodeFromVideoDevice(selectedDeviceId, videoElement, (result, err) => {
+                            if (result) {
+                                const scannedCode = result.text;
+                                if (scannedCode !== lastScannedCode) {
+                                    lastScannedCode = scannedCode;
+                                    checkDatabase(scannedCode); // Check the scanned URL against the database
+                                }
+                            } else if (err) {
+                                if (err instanceof ZXing.NotFoundException) {
+                                    if (!lastScannedCode) {
+                                        qrResultElement.textContent = "Scanning... No valid code detected.";
+                                        qrResultElement.style.color = "orange";
+                                    }
+                                } else {
+                                    console.error("Decoding error:", err);
+                                }
+                            }
+                        });
+                    }).catch(err => {
+                        qrResultElement.textContent = "Error accessing camera.";
+                        qrResultElement.style.color = "red";
+                        console.error("Camera access error:", err);
+                    });
+                } else {
+                    qrResultElement.textContent = "No camera found.";
+                    qrResultElement.style.color = "red";
+                }
+            }).catch(err => {
+                qrResultElement.textContent = "Error initializing scanner.";
+                qrResultElement.style.color = "red";
+                console.error("Initialization error:", err);
+            });
+        }
+
+        // Start the scanner
+        startScanner();
+    </script>
+</body>
+</html>
